@@ -44,6 +44,7 @@ import torch.utils.data
 
 if TYPE_CHECKING:
     from composer.trainer.devices import Device
+    from composer.trainer.trainer import _is_tpu_installed
 
 TObj = TypeVar('TObj')
 

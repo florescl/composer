@@ -16,7 +16,6 @@ import time
 import warnings
 from copy import deepcopy
 from typing import Any, Callable, ContextManager, Dict, Iterable, List, Optional, Sequence, TextIO, Tuple, Union, cast
-import torch_xla.core.xla_model as xm
 
 import coolname
 import torch
@@ -45,8 +44,9 @@ from composer.trainer._scale_schedule import scale_pytorch_scheduler
 from composer.trainer._scaler import ClosureGradScaler
 from composer.trainer.ddp import DDPSyncStrategy, ddp_sync_context, prepare_ddp_module
 from composer.trainer.devices import Device, DeviceCPU, DeviceGPU, DeviceMPS, DeviceTPU
-from composer.utils import (ObjectStore, dist, ensure_tuple, format_name_with_dist, is_model_deepspeed, map_collection,
+from composer.utils import (ObjectStore, ensure_tuple, format_name_with_dist, is_model_deepspeed, map_collection,
                             reproducibility)
+
 from composer.utils.checkpoint import load_checkpoint, save_checkpoint
 from composer.utils.file_helpers import get_file
 from composer.utils.import_helpers import MissingConditionalImportError
@@ -59,6 +59,19 @@ __all__ = ['Trainer']
 # syntax to shorten the Scheduler type annoations
 Scheduler = Union[ComposerScheduler, PyTorchScheduler]
 
+def _is_tpu_installed() -> bool:
+    try:
+        import torch_xla.core.xla_model as xm
+        del xm
+    except ImportError:
+        return False
+    else:
+        return True
+
+if _is_tpu_installed():
+    from composer.utils import xla as dist
+else:
+    from composer.utils import dist as dist
 
 def _raise_missing_argument_exception(arg_name: str):
     raise ValueError((f'{arg_name} is a required argument and must be specified when constructing the '
@@ -247,43 +260,11 @@ def _generate_run_name() -> str:
     generated_run_name = run_name_list[0]
     return generated_run_name
 
-def _is_tpu_installed() -> bool:
-    try:
-        import torch_xla.core.xla_model as xm
-    except ImportError:
-        return False
-    else:
-        return True
-
-def _is_tpu_installed() -> bool:
-    try:
-        import torch_xla.core.xla_model as xm
-        del xm
-    except ImportError:
-        return False
-    else:
-        return True
-
 
 if _is_tpu_installed():
     import torch_xla.core.xla_model as xm
     import torch_xla.distributed.parallel_loader as pl
 
-
-
-def _is_tpu_installed() -> bool:
-    try:
-        import torch_xla.core.xla_model as xm
-        del xm
-    except ImportError:
-        return False
-    else:
-        return True
-
-
-if _is_tpu_installed():
-    import torch_xla.core.xla_model as xm
-    import torch_xla.distributed.parallel_loader as pl
 
 
 class Trainer:
@@ -1203,7 +1184,7 @@ class Trainer:
             torch.tensor([os.path.exists(latest_checkpoint_path)], dtype=torch.uint8))
 
         ## todo: fix for tpu
-        #dist.all_reduce(latest_checkpoint_exists, reduce_operation='MIN')
+        dist.all_reduce(latest_checkpoint_exists, reduce_operation='MIN')
         
         # If latest checkpoint is saved locally, change load_path to it
         if int(latest_checkpoint_exists.item()) == 1:
