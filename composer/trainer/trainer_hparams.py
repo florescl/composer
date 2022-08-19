@@ -38,8 +38,9 @@ from composer.trainer.ddp import DDPSyncStrategy
 from composer.trainer.devices import Device, DeviceCPU, DeviceGPU, DeviceTPU
 from composer.trainer.devices.device_hparams_registry import device_registry
 from composer.trainer.trainer import Trainer, _is_tpu_installed
+from composer.utils import dist, reproducibility
 
->>>>>>> f5a21df7e4347c860ee5fbc33575cf04ad605bda
+
 from composer.utils.object_store.object_store_hparams import ObjectStoreHparams, object_store_registry
 
 if TYPE_CHECKING:
