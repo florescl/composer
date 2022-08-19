@@ -16,6 +16,7 @@ import time
 import warnings
 from copy import deepcopy
 from typing import Any, Callable, ContextManager, Dict, Iterable, List, Optional, Sequence, TextIO, Tuple, Union, cast
+import torch_xla.core.xla_model as xm
 
 import coolname
 import torch
@@ -124,7 +125,7 @@ def _filter_metrics(metrics: Union[Metric, MetricCollection],
 def _validate_precision(precision: Precision, device: Device, deepspeed_enabled: bool):
     if isinstance(device, DeviceCPU) and precision != Precision.FP32:
         raise ValueError(f'{precision} is not supproted for CPU training.')
-    if not deepspeed_enabled and precision == Precision.FP16:
+    if not deepspeed_enabled and precision == Precision.FP16 and not isinstance(device, DeviceTPU):
         raise ValueError('FP16 precision is only supported when training with DeepSpeed.')
 
 
@@ -217,7 +218,9 @@ def _distribute_and_get_random_seed(seed: Optional[int], device: Device):
 
     # using int64 to prevent overflow
     rank_zero_seed = device.tensor_to_device(torch.tensor([seed], dtype=torch.int64))
-    dist.broadcast(rank_zero_seed, src=0)
+    if torch.cuda.is_available():
+        dist.broadcast(rank_zero_seed, src=0)
+    
     rank_zero_seed = rank_zero_seed.item()
     assert isinstance(rank_zero_seed, int)
     seed = rank_zero_seed + dist.get_global_rank()
@@ -243,6 +246,29 @@ def _generate_run_name() -> str:
     dist.broadcast_object_list(run_name_list)
     generated_run_name = run_name_list[0]
     return generated_run_name
+
+def _is_tpu_installed() -> bool:
+    try:
+        import torch_xla.core.xla_model as xm
+    except ImportError:
+        return False
+    else:
+        return True
+
+def _is_tpu_installed() -> bool:
+    try:
+        import torch_xla.core.xla_model as xm
+        del xm
+    except ImportError:
+        return False
+    else:
+        return True
+
+
+if _is_tpu_installed():
+    import torch_xla.core.xla_model as xm
+    import torch_xla.distributed.parallel_loader as pl
+
 
 
 def _is_tpu_installed() -> bool:
@@ -794,7 +820,8 @@ class Trainer:
         self._device = _get_device(device)
 
         # Distributed
-        if deepspeed_enabled or dist.get_world_size() > 1:
+
+        if torch.cuda.is_available() and deepspeed_enabled or dist.get_world_size() > 1:
             # deepspeed requires torch.distributed to be initialized, even if the world size is 1
             # distributed is always required with multi-rank training
             dist.initialize_dist(self._device, datetime.timedelta(seconds=dist_timeout))
@@ -1100,7 +1127,7 @@ class Trainer:
         reproducibility.seed_all(self.state.seed)
 
         # Move the model and optimizers to the specified device
-        if not self.deepspeed_enabled and dist.get_world_size() > 1:
+        if not self.deepspeed_enabled and dist.get_world_size() > 1 and not torch.cuda.is_available():
             # Only wrap the module if required
             self.state.model = prepare_ddp_module(self.state.model, self._find_unused_parameters)
 
@@ -1174,7 +1201,10 @@ class Trainer:
         # Require all ranks to have local checkpoint if we wish to restore from it
         latest_checkpoint_exists = self._device.tensor_to_device(
             torch.tensor([os.path.exists(latest_checkpoint_path)], dtype=torch.uint8))
-        dist.all_reduce(latest_checkpoint_exists, reduce_operation='MIN')
+
+        ## todo: fix for tpu
+        #dist.all_reduce(latest_checkpoint_exists, reduce_operation='MIN')
+        
         # If latest checkpoint is saved locally, change load_path to it
         if int(latest_checkpoint_exists.item()) == 1:
             return latest_checkpoint_path
@@ -1521,6 +1551,8 @@ class Trainer:
 
         self.engine.run_event(Event.FIT_START)
 
+        self.state.scaler = ClosureGradScaler() if self._use_closures() else GradScaler()
+
         use_grad_scaling = self._use_grad_scaling(self.state.precision, self.state.scaler)
 
         self._spin_dataloaders()
@@ -1619,6 +1651,7 @@ class Trainer:
                         rank_num_samples,
                         rank_num_tokens,
                         batch_time,
+
                     )
 
                     # `now` is actually in the past, but want to include the time it takes to perform this reduction
@@ -1688,6 +1721,7 @@ class Trainer:
             except BreakEpochException:
                 log.info(f'Skipping the rest of Epoch {int(self.state.timestamp.epoch)}')
 
+
         self.engine.run_event(Event.FIT_END)
         self._run_evaluators(Event.FIT_END, log_level=LogLevel.FIT)
 
@@ -1734,7 +1768,8 @@ class Trainer:
                     for optimizer in self.state.optimizers:
                         if use_grad_scaling:
                             total_loss = self.state.scaler.step(
-                                optimizer, closure=lambda **kwargs: self._train_microbatches(microbatches, **kwargs))
+                                optimizer,
+                                closure=lambda **kwargs: self._train_microbatches(microbatches, **kwargs))
                         else:
                             total_loss = optimizer.step(
                                 closure=lambda **kwargs: self._train_microbatches(microbatches, **kwargs).item())
@@ -2276,7 +2311,6 @@ class Trainer:
 
         if isinstance(self._device, DeviceTPU):
             return False
-
         if self.state.precision != Precision.AMP:
             return True
 
