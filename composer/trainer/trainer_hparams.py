@@ -1,11 +1,10 @@
 # Copyright 2022 MosaicML Composer authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""The :class:`~yahp.hparams.Hparams` used to construct the :class:`~composer.trainer.trainer.Trainer`."""
+"""The :class:`~yahp.hparams.Hparams` used to construct the :class:`.Trainer`."""
 
 from __future__ import annotations
 
-import copy
 import dataclasses
 import datetime
 import logging
@@ -38,8 +37,9 @@ from composer.profiler import Profiler
 from composer.trainer.ddp import DDPSyncStrategy
 from composer.trainer.devices import Device, DeviceCPU, DeviceGPU, DeviceTPU
 from composer.trainer.devices.device_hparams_registry import device_registry
-from composer.trainer.trainer import Trainer,  _is_tpu_installed
-from composer.utils import MissingConditionalImportError, dist, reproducibility
+from composer.trainer.trainer import Trainer, _is_tpu_installed
+
+>>>>>>> f5a21df7e4347c860ee5fbc33575cf04ad605bda
 from composer.utils.object_store.object_store_hparams import ObjectStoreHparams, object_store_registry
 
 if TYPE_CHECKING:
@@ -83,6 +83,7 @@ def _initialize_dataloader(
             raise ValueError(
                 f'The batch size for {dataloader_label} must be specified if the {dataloader_label} dataset is specified'
             )
+
 
         import torch_xla.core.xla_model as xm
         train_device_batch_size = batch_size // xm.xrt_world_size() #dist.
@@ -233,17 +234,17 @@ class TrainerHparams(hp.Hparams):
         load_progress_bar (bool, optional): See :class:`.Trainer`.
         load_ignore_keys (List[str] | (Dict) -> None, optional): See :class:`.Trainer`.
 
-        save_folder (str, optional): See :class:`~composer.callbacks.checkpoint_saver.CheckpointSaver`.
-        save_filename (str, optional): See :class:`~composer.callbacks.checkpoint_saver.CheckpointSaver`.
-        save_artifact_name (str, optional): See :class:`~composer.callbacks.checkpoint_saver.CheckpointSaver`.
+        save_folder (str, optional): See :class:`.CheckpointSaver`.
+        save_filename (str, optional): See :class:`.CheckpointSaver`.
+        save_artifact_name (str, optional): See :class:`.CheckpointSaver`.
         save_latest_filename (str, optional): See
-            :class:`~composer.callbacks.checkpoint_saver.CheckpointSaver`.
-        save_latest_artifact_name (str, optional): See :class:`~composer.callbacks.checkpoint_saver.CheckpointSaver`.
-        save_overwrite (str, optional): See :class:`~composer.callbacks.checkpoint_saver.CheckpointSaver`.
-        save_weights_only (bool, optional): See :class:`~composer.callbacks.checkpoint_saver.CheckpointSaver`.
+            :class:`.CheckpointSaver`.
+        save_latest_artifact_name (str, optional): See :class:`.CheckpointSaver`.
+        save_overwrite (str, optional): See :class:`.CheckpointSaver`.
+        save_weights_only (bool, optional): See :class:`.CheckpointSaver`.
         save_interval (str, optional): See
             :class:`~composer.callbacks.callback_hparams.CheckpointSaverHparams`.
-        save_num_checkpoints_to_keep (int, optional): See :class:`~composer.callbacks.checkpoint_saver.CheckpointSaver`.
+        save_num_checkpoints_to_keep (int, optional): See :class:`.CheckpointSaver`.
         autoresume (bool, optional): See :class:`.Trainer`.
 
         deepspeed_config (Dict[str, JSON], optional): If set to a dict will be used for as the DeepSpeed
@@ -457,14 +458,13 @@ class TrainerHparams(hp.Hparams):
         # on TPUs, model must be moved to device before optimizer creation
         if isinstance(device, DeviceTPU):
             if not _is_tpu_installed():
-                raise MissingConditionalImportError(extra_deps_group='tpu', conda_package='torch_xla[tpuvm]')
+                raise ImportError(
+                    'Unable to import torch_xla. Please follow installation instructions at https://github.com/pytorch/xla'
+                )
             import torch_xla.core.xla_model as xm
             import torch_xla.distributed.xla_multiprocessing as xmp
 
-            
-            WRAPPED_MODEL = xmp.MpModelWrapper(model)
-            xla_device = xm.xla_device()
-            model = WRAPPED_MODEL.to(xla_device)
+            model = xmp.MpModelWrapper(model).to(xm.xla_device())
 
         # Train dataloader
         train_dataloader = _initialize_dataloader(self.train_dataset, self.train_dataloader_label,
@@ -743,7 +743,7 @@ class EvalKwargs(TypedDict):
     """
     dataloader: Union[Iterable, DataSpec, dict]
     dataloader_label: str
-    metrics: Union[Metric, MetricCollection]
+    metric_names: List[str]
     subset_num_batches: int
     log_level: Union[str, LogLevel]
 
@@ -802,10 +802,6 @@ class EvalHparams(hp.Hparams):
 
         # Metrics
 
-        # TODO(Ravi): Cleanup this code as part of the MetricsModule. This code was copied
-        # from composer/datasets/evaluator.py, but will likely be removed when the MetricsModule
-        # is implemented, as the trainer will not be responsible for constructing metrics.
-
         # Get and copy all the model's associated evaluation metrics
         model_metrics = model.metrics(train=False)
         if isinstance(model_metrics, Metric):
@@ -814,9 +810,9 @@ class EvalHparams(hp.Hparams):
 
         # Use all the metrics from the model if no metric_names are specified
         if self.metric_names is None:
-            metrics = copy.deepcopy(model_metrics)
+            metric_names = [str(k) for k in model_metrics.keys()]  # convert hashable to str
         else:
-            metrics = MetricCollection([])
+            metric_names = []
             for metric_name in self.metric_names:
                 try:
                     metric = model_metrics[metric_name]
@@ -824,15 +820,15 @@ class EvalHparams(hp.Hparams):
                     raise RuntimeError((f'No metric found with the name {metric_name}. Check if this '
                                         'metric is compatible/listed in your model metrics. ')) from e
                 assert isinstance(metric, Metric), 'all values of a MetricCollection.__getitem__ should be a metric'
-                metrics.add_metrics(copy.deepcopy(metric))
-            if len(metrics) == 0:
+                metric_names.append(str(metric_name))
+            if len(metric_names) == 0:
                 raise RuntimeError(('No metrics compatible with your model were added to this evaluator. '
                                     'Check that the metrics you specified are compatible/listed in your model.'))
 
         return {
             'dataloader': dataloader,
             'dataloader_label': self.dataloader_label,
-            'metrics': metrics,
+            'metric_names': metric_names,
             'subset_num_batches': self.subset_num_batches,
             'log_level': self.log_level,
         }
@@ -913,8 +909,7 @@ class ExperimentHparams(hp.Hparams):
                 (trainer, list of :meth:`~.Trainer.fit` kwargs, list of :meth:`~.Trainer.eval` kwargs).
         """
         trainer = self.trainer.initialize_object()
-        # TODO(ravi): With MetricsModule, `fit_hparams` and `eval_hparams` will
-        # no longer need the original model
+
         fit_kwargs = [
             fit_hparams.initialize_object(trainer._original_model, self.trainer.dataloader) for fit_hparams in self.fits
         ]
