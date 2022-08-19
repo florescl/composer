@@ -256,7 +256,8 @@ def _generate_run_name() -> str:
     generated_run_name = str(int(time.time())) + '-' + coolname.generate_slug(2)
     run_name_list = [generated_run_name]
     # ensure all ranks have the same experiment name
-    dist.broadcast_object_list(run_name_list)
+    if torch.cuda.is_available():
+        dist.broadcast_object_list(run_name_list)
     generated_run_name = run_name_list[0]
     return generated_run_name
 
@@ -802,7 +803,7 @@ class Trainer:
 
         # Distributed
 
-        if torch.cuda.is_available() and deepspeed_enabled or dist.get_world_size() > 1:
+        if torch.cuda.is_available() and deepspeed_enabled:
             # deepspeed requires torch.distributed to be initialized, even if the world size is 1
             # distributed is always required with multi-rank training
             dist.initialize_dist(self._device, datetime.timedelta(seconds=dist_timeout))
@@ -1108,7 +1109,7 @@ class Trainer:
         reproducibility.seed_all(self.state.seed)
 
         # Move the model and optimizers to the specified device
-        if not self.deepspeed_enabled and dist.get_world_size() > 1 and not torch.cuda.is_available():
+        if not self.deepspeed_enabled and dist.get_world_size() > 1 and torch.cuda.is_available():
             # Only wrap the module if required
             self.state.model = prepare_ddp_module(self.state.model, self._find_unused_parameters)
 
