@@ -38,7 +38,7 @@ from composer.trainer.ddp import DDPSyncStrategy
 from composer.trainer.devices import Device, DeviceCPU, DeviceGPU, DeviceTPU
 from composer.trainer.devices.device_hparams_registry import device_registry
 from composer.trainer.trainer import Trainer, _is_tpu_installed
-from composer.utils import dist, reproducibility
+from composer.utils import reproducibility
 
 
 from composer.utils.object_store.object_store_hparams import ObjectStoreHparams, object_store_registry
@@ -51,6 +51,11 @@ else:
 # Specifically excluding `FitKwargs` and `EvalKwargs` from `__all__` and documentation
 # They exist purely for pyright and should never need
 __all__ = ['TrainerHparams', 'load', 'FitHparams', 'EvalHparams', 'ExperimentHparams']
+
+if _is_tpu_installed():
+    from composer.utils import xla as dist
+else:
+    from composer.utils import dist as dist
 
 Scheduler = Union[ComposerScheduler, PyTorchScheduler]
 
@@ -129,8 +134,7 @@ def _initialize_eval_dataloader(
             dataloader_hparams,
         )
     if evaluators is not None:
-        import torch_xla.core.xla_model as xm
-        eval_device_batch_size = (eval_batch_size or 0) // xm.xrt_world_size()#dist.get_world_size()
+        eval_device_batch_size = (eval_batch_size or 0) // dist.xrt_world_size()
         eval_dataloader = [
             evaluator.initialize_object(model, eval_device_batch_size, dataloader_hparams) for evaluator in evaluators
         ]
@@ -392,13 +396,7 @@ class TrainerHparams(hp.Hparams):
             if self.deterministic_mode and zero_stage > 0:
                 raise ValueError('Deepspeed with zero stage > 0 is not compatible with deterministic mode')
 
-
-        if not torch.cuda.is_available():
-            if not _is_tpu_installed():
-                raise MissingConditionalImportError(extra_deps_group='tpu', conda_package='torch_xla[tpuvm]')
-            import torch_xla.core.xla_model as xm
-            
-            world_size = xm.xrt_world_size()
+            world_size = dist.xrt_world_size()
 
         if self.train_batch_size is not None and self.train_batch_size % world_size != 0:
             raise ValueError(

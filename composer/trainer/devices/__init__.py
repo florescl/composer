@@ -13,5 +13,3 @@ from composer.trainer.devices.device_mps import DeviceMPS as DeviceMPS
 from composer.trainer.devices.device_tpu import DeviceTPU as DeviceTPU
 
 __all__ = ['Device', 'DeviceCPU', 'DeviceGPU', 'DeviceMPS', 'DeviceTPU']
-
-

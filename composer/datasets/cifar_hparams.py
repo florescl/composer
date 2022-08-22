@@ -24,7 +24,13 @@ from composer.datasets.dataset_hparams import DataLoaderHparams, DatasetHparams
 from composer.datasets.ffcv_utils import write_ffcv_dataset
 from composer.datasets.synthetic import SyntheticBatchPairDataset
 from composer.datasets.synthetic_hparams import SyntheticHparamsMixin
-from composer.utils import dist
+from composer.trainer.trainer import _is_tpu_installed
+
+if _is_tpu_installed():
+    from composer.utils import xla as dist
+else:
+    from composer.utils import dist as dist
+    
 
 __all__ = ['CIFAR10DatasetHparams', 'StreamingCIFAR10Hparams']
 
