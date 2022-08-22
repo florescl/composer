@@ -33,7 +33,7 @@ model:
 max_duration: 20ep
 train_batch_size: 1024
 eval_batch_size: 1000
-eval_interval: 5ep
+eval_interval: 1ep
 seed: 17
 grad_accum: 1
 dataloader:

@@ -134,7 +134,7 @@ def _initialize_eval_dataloader(
             dataloader_hparams,
         )
     if evaluators is not None:
-        eval_device_batch_size = (eval_batch_size or 0) // dist.xrt_world_size()
+        eval_device_batch_size = (eval_batch_size or 0) // dist.get_world_size()
         eval_dataloader = [
             evaluator.initialize_object(model, eval_device_batch_size, dataloader_hparams) for evaluator in evaluators
         ]
@@ -396,7 +396,7 @@ class TrainerHparams(hp.Hparams):
             if self.deterministic_mode and zero_stage > 0:
                 raise ValueError('Deepspeed with zero stage > 0 is not compatible with deterministic mode')
 
-            world_size = dist.xrt_world_size()
+        world_size = dist.get_world_size()
 
         if self.train_batch_size is not None and self.train_batch_size % world_size != 0:
             raise ValueError(
